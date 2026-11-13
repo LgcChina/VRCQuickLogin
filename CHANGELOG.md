@@ -5,7 +5,8 @@
 - 将 VRChat SDK Base 最低依赖从 3.10.6 放宽至 3.9.0，并保留 3.9.0 的静态 `SignIn(bool)` 与 3.10.6 的实例 `SignIn(bool)` 兼容调用。
 - 保留多账号、备注、Windows 凭据管理器账密保存、明文降级、旧版单账号迁移和 SDK 快捷登录功能。
 - 移除 v1.2.0 本地测试版的登录会话缓存、Token 读写、会话恢复、免验证切号、Cookie/当前用户清理和相关账号字段，避免继续使用无法可靠实现多账号直接登录的实验代码。
-- v1.1.5 不读取或恢复测试版留下的 `LGC.Unity.VRCQuickLogin.Session/<记录 ID>`；如本机存在这些 Windows 普通凭据，请确认不再需要后手动删除。\r\n- 兼容 v1.2.0 测试版留下的 `accounts.json` `version: 2` 格式，首次打开工具时忽略测试字段并自动归一化为普通 `version: 1` 格式。
+- v1.1.5 不读取或恢复测试版留下的 `LGC.Unity.VRCQuickLogin.Session/<记录 ID>`；如本机存在这些 Windows 普通凭据，请确认不再需要后手动删除。
+- 兼容 v1.2.0 测试版留下的 `accounts.json` `version: 2` 格式，首次打开工具时忽略测试字段并自动归一化为普通 `version: 1` 格式。
 - 同步更新窗口、脚本头注释、README、包清单和打包校验脚本版本。
 - 安装方式：继续通过项目的 ALCOM/VPM 包源安装；本版发布 GitHub Release；VPM 发布索引待本次发布确认后再单独更新。
 
