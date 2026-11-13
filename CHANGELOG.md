@@ -8,7 +8,7 @@
 - v1.1.5 不读取或恢复测试版留下的 `LGC.Unity.VRCQuickLogin.Session/<记录 ID>`；如本机存在这些 Windows 普通凭据，请确认不再需要后手动删除。
 - 兼容 v1.2.0 测试版留下的 `accounts.json` `version: 2` 格式，首次打开工具时忽略测试字段并自动归一化为普通 `version: 1` 格式。
 - 同步更新窗口、脚本头注释、README、包清单和打包校验脚本版本。
-- 安装方式：继续通过项目的 ALCOM/VPM 包源安装；本版发布 GitHub Release；VPM 发布索引待本次发布确认后再单独更新。
+- 安装方式：继续通过项目的 ALCOM/VPM 包源安装；本版发布 GitHub Release，并由 VPM 发布索引自动同步。
 
 ### v1.1.5 注意
 
