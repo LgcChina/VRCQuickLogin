@@ -1,4 +1,4 @@
-// LGC VRC Quick Login v1.1.3. Editor-only; credentials never belong to project assets.
+// LGC VRC Quick Login v1.1.5. Editor-only; credentials never belong to project assets.
 #if UNITY_EDITOR
 using System;
 using System.IO;
@@ -15,7 +15,7 @@ namespace LGC.VrcQuickLogin
 {
     public sealed class VrcQuickLoginWindow : EditorWindow
     {
-        internal const string Version = "1.1.3";
+        internal const string Version = "1.1.5";
         private const float AccountRowHeight = 42;
         [NonSerialized] private string selectedId, username = "", password = "", note = "", status;
         [NonSerialized] private AccountRepository repository;
@@ -179,7 +179,7 @@ namespace LGC.VrcQuickLogin
                                         repository.Delete(account.id);
                                         if (selectedId == account.id) selectedId = null;
                                         Reload();
-                                        status = "已删除该账号，SDK 当前会话不变。"; statusType = MessageType.Info;
+                                        status = "已删除该账号的密码；SDK 当前会话不变。"; statusType = MessageType.Info;
                                     });
                                 }
                             }
@@ -198,8 +198,16 @@ namespace LGC.VrcQuickLogin
             selectedId = repository.Save(selectedId, username, password, note);
             password = ""; dirty = false; Reload();
             bool plain = repository.StoreFor(selectedId).IsPlaintext;
-            status = plain ? "已保存；系统凭据不可用，当前账号降级为本机明文保存。" : "账号与备注已保存，密码使用 Windows 凭据管理器。";
-            statusType = plain ? MessageType.Warning : MessageType.Info;
+            if (plain)
+            {
+                status = "账号与备注已保存；密码降级为本机明文保存。";
+                statusType = MessageType.Warning;
+            }
+            else
+            {
+                status = "账号与备注已保存；密码使用 Windows 凭据管理器。";
+                statusType = MessageType.Info;
+            }
         }
         private void Perform(Action action) { try { action(); } catch (Exception e) { SetError(e); } }
         private void SetError(Exception e) { status = SafeError(e); statusType = MessageType.Error; }
@@ -329,12 +337,12 @@ namespace LGC.VrcQuickLogin
         [DllImport("advapi32.dll")]
         private static extern void CredFree(IntPtr buffer);
 
-        public LoginCredential Read()
+        private string ReadValue(out string userName)
         {
             if (!CredRead(target, Generic, 0, out var pointer))
             {
                 int code = Marshal.GetLastWin32Error();
-                if (code == NotFound) return null;
+                if (code == NotFound) { userName = null; return null; }
                 throw NativeError(code);
             }
             try
@@ -342,13 +350,12 @@ namespace LGC.VrcQuickLogin
                 var native = Marshal.PtrToStructure<Credential>(pointer);
                 if (native.CredentialBlobSize > 2560 || native.CredentialBlobSize % 2 != 0 ||
                     native.CredentialBlob == IntPtr.Zero) throw new QuickLoginException("系统凭据格式无效，请重新保存。");
+                userName = native.UserName;
                 byte[] bytes = new byte[native.CredentialBlobSize];
                 try
                 {
                     Marshal.Copy(native.CredentialBlob, bytes, 0, bytes.Length);
-                    var credential = new LoginCredential { username = native.UserName, password = Encoding.Unicode.GetString(bytes) };
-                    credential.Validate();
-                    return credential;
+                    return Encoding.Unicode.GetString(bytes);
                 }
                 finally
                 {
@@ -359,22 +366,40 @@ namespace LGC.VrcQuickLogin
             finally { CredFree(pointer); }
         }
 
-        public void Write(LoginCredential credential)
+        private void WriteValue(string userName, string secret)
         {
-            credential.Validate();
-            IntPtr blob = Marshal.StringToCoTaskMemUni(credential.password);
+            if (userName == null || secret == null || userName.Contains("\0") || secret.Contains("\0"))
+                throw new QuickLoginException("系统凭据内容无效，未保存。");
+            int size = Encoding.Unicode.GetByteCount(secret);
+            if (size <= 0 || size > 2560) throw new QuickLoginException("系统凭据内容过长，未保存。");
+            IntPtr blob = Marshal.StringToCoTaskMemUni(secret);
             try
             {
                 var native = new Credential
                 {
-                    Type = Generic, TargetName = target, UserName = credential.username,
+                    Type = Generic, TargetName = target, UserName = userName,
                     Comment = "LGC VRC Quick Login (local Unity editor utility)",
-                    CredentialBlobSize = (uint)Encoding.Unicode.GetByteCount(credential.password),
+                    CredentialBlobSize = (uint)size,
                     CredentialBlob = blob, Persist = PersistLocalMachine
                 };
                 if (!CredWrite(ref native, 0)) throw NativeError(Marshal.GetLastWin32Error());
             }
             finally { Marshal.ZeroFreeCoTaskMemUnicode(blob); }
+        }
+
+        public LoginCredential Read()
+        {
+            string secret = ReadValue(out var userName);
+            if (secret == null) return null;
+            var credential = new LoginCredential { username = userName, password = secret };
+            credential.Validate();
+            return credential;
+        }
+
+        public void Write(LoginCredential credential)
+        {
+            credential.Validate();
+            WriteValue(credential.username, credential.password);
         }
 
         public void Delete()
@@ -393,7 +418,7 @@ namespace LGC.VrcQuickLogin
     {
         private const BindingFlags Static = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
         private const BindingFlags Instance = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-        private readonly PropertyInfo username, password, loggedIn, currentUser, twoFactor, environment, currentTab;
+        private readonly PropertyInfo username, password, loggedIn, twoFactor, environment, currentTab;
         private readonly FieldInfo window, initialized, signingIn;
         private readonly MethodInfo showPanel, signIn, selectTab;
         private readonly object accountTab;
@@ -403,7 +428,6 @@ namespace LGC.VrcQuickLogin
             username = panel.GetProperty("username", Static);
             password = panel.GetProperty("password", Static);
             loggedIn = user.GetProperty("IsLoggedIn", Static);
-            currentUser = user.GetProperty("CurrentUser", Static);
             twoFactor = panel.GetProperty("twoFactorAuthenticationEntryType", Static);
             environment = panel.GetProperty("ApiEnvironment", Static);
             currentTab = panel.GetProperty("CurrentTab", Instance);
@@ -411,12 +435,14 @@ namespace LGC.VrcQuickLogin
             initialized = panel.GetField("isInitialized", Static);
             signingIn = panel.GetField("signingIn", Static);
             showPanel = panel.GetMethod("ShowControlPanel", Static, null, Type.EmptyTypes, null);
-            signIn = panel.GetMethod("SignIn", Instance, null, new[] { typeof(bool) }, null);
+            // 3.9 keeps SignIn static; 3.10.6 exposes it as an instance method.
+            signIn = panel.GetMethod("SignIn", Static, null, new[] { typeof(bool) }, null) ??
+                     panel.GetMethod("SignIn", Instance, null, new[] { typeof(bool) }, null);
             var tabType = panel.GetNestedType("PanelTab", BindingFlags.Public | BindingFlags.NonPublic);
             selectTab = tabType == null ? null : panel.GetMethod("SelectTab", Instance, null, new[] { tabType }, null);
             if (username?.PropertyType != typeof(string) || password?.PropertyType != typeof(string) ||
                 !username.CanWrite || !password.CanWrite || loggedIn?.PropertyType != typeof(bool) ||
-                currentUser == null || twoFactor == null || environment == null || currentTab == null || window == null ||
+                twoFactor == null || environment == null || currentTab == null || window == null ||
                 initialized?.FieldType != typeof(bool) || signingIn?.FieldType != typeof(bool) ||
                 showPanel == null || signIn == null || selectTab == null || !Enum.IsDefined(tabType, "Account"))
                 throw new QuickLoginException("当前 SDK 登录接口不兼容，工具不会修改 SDK。");
@@ -428,7 +454,9 @@ namespace LGC.VrcQuickLogin
             try
             {
                 Type panel = FindType("VRCSdkControlPanel"), user = FindType("VRC.Core.APIUser");
-                return panel == null || user == null ? null : new SdkLoginAdapter(panel, user);
+                return panel == null || user == null
+                    ? null
+                    : new SdkLoginAdapter(panel, user);
             }
             catch { return null; }
         }
@@ -443,14 +471,6 @@ namespace LGC.VrcQuickLogin
         internal bool IsSigningIn => (bool)signingIn.GetValue(null);
         internal bool NeedsCode => twoFactor.GetValue(null)?.ToString() != "None";
         internal bool IsProduction => environment.GetValue(null)?.ToString() == "Release";
-        internal string DisplayName
-        {
-            get
-            {
-                object user = currentUser.GetValue(null);
-                return user?.GetType().GetProperty("displayName", Instance)?.GetValue(user) as string ?? "";
-            }
-        }
         internal bool Ready
         {
             get
@@ -477,7 +497,7 @@ namespace LGC.VrcQuickLogin
             Fill(credential);
             var panel = (EditorWindow)window.GetValue(null);
             // This is the SDK's own Sign In command, including its cookie and 2FA handling.
-            try { signIn.Invoke(panel, new object[] { true }); }
+            try { signIn.Invoke(signIn.IsStatic ? null : (object)panel, new object[] { true }); }
             catch
             {
                 password.SetValue(null, null);
@@ -509,6 +529,7 @@ namespace LGC.VrcQuickLogin
             if (adapter.IsLoggedIn) { Status = "SDK 已登录，不会退出当前账号。"; Failed = false; return; }
             if (adapter.IsSigningIn) throw new QuickLoginException("SDK 已在处理登录，请在 SDK 面板继续。");
             if (!adapter.IsProduction) throw new QuickLoginException("SDK 当前不是正式环境，未提交保存的账密。");
+
             sdk = adapter; pending = credential; started = EditorApplication.timeSinceStartup; submitted = false;
             autoSubmit = submit;
             Busy = true; Failed = false; Status = "正在打开 SDK 登录面板…";
@@ -521,9 +542,9 @@ namespace LGC.VrcQuickLogin
         {
             try
             {
+                if (EditorApplication.isPlayingOrWillChangePlaymode) { Finish("进入运行模式，工具已停止处理；SDK 会话保持原样。", true); return; }
                 if (sdk.IsLoggedIn) { Finish("登录成功。", false); return; }
                 double elapsed = EditorApplication.timeSinceStartup - started;
-                if (EditorApplication.isPlayingOrWillChangePlaymode) { Finish("进入运行模式，工具已停止处理；SDK 会话保持原样。", true); return; }
                 if (!submitted)
                 {
                     if (elapsed > 45) { Finish("SDK 初始化超时；未提交账密，请检查网络或 SDK 面板后重试。", true); return; }
@@ -611,10 +632,16 @@ namespace LGC.VrcQuickLogin
             {
                 if (new FileInfo(path).Length > 1024 * 1024) throw new IOException();
                 var catalog = JsonUtility.FromJson<AccountCatalog>(File.ReadAllText(path));
-                if (catalog == null || catalog.version != 1 || catalog.accounts == null ||
+                if (catalog == null || (catalog.version != 1 && catalog.version != 2) || catalog.accounts == null ||
                     catalog.accounts.Any(a => a == null || string.IsNullOrWhiteSpace(a.username)) ||
                     catalog.accounts.Select(a => a.id).Distinct().Count() != catalog.accounts.Count) throw new IOException();
                 foreach (var account in catalog.accounts) ValidateId(account.id);
+                if (catalog.version == 2)
+                {
+                    // v1.2.0 stored session-only fields in the account index. They are ignored and removed.
+                    catalog.version = 1;
+                    Persist(catalog);
+                }
                 return catalog;
             }
             catch { throw new QuickLoginException("账号索引无法读取，已停止修改。请保留本机 accounts.json 和 Secrets 文件夹排查。"); }
@@ -690,8 +717,13 @@ namespace LGC.VrcQuickLogin
             try
             {
                 store.Save(credential);
-                if (existing == null) catalog.accounts.Add(new SavedAccount { id = savedId, username = username, note = note });
-                else { existing.username = username; existing.note = note; }
+                if (existing == null)
+                    catalog.accounts.Add(new SavedAccount { id = savedId, username = username, note = note });
+                else
+                {
+                    existing.username = username;
+                    existing.note = note;
+                }
                 Persist(catalog);
             }
             catch
@@ -790,7 +822,7 @@ namespace LGC.VrcQuickLogin
             container.Add(root);
             root.schedule.Execute(() =>
             {
-                bool visible = sdk.IsAccountTab && !sdk.IsLoggedIn;
+                bool visible = sdk.IsAccountTab;
                 root.style.display = visible ? DisplayStyle.Flex : DisplayStyle.None;
                 button.SetEnabled(visible && sdk.Ready && !sdk.IsSigningIn && !sdk.NeedsCode && !LoginRunner.Busy && !EditorApplication.isPlayingOrWillChangePlaymode);
                 status.text = LoginRunner.Status ?? "";
@@ -831,7 +863,7 @@ namespace LGC.VrcQuickLogin
             {
                 if (catalog.accounts.Count == 0) EditorGUILayout.LabelField("尚未保存账号", EditorStyles.centeredGreyMiniLabel);
                 var style = new GUIStyle(GUI.skin.button) { alignment = TextAnchor.MiddleLeft, wordWrap = true, padding = new RectOffset(8, 8, 6, 6) };
-                using (new EditorGUI.DisabledScope(LoginRunner.Busy || sdk.IsLoggedIn || sdk.IsSigningIn || EditorApplication.isPlayingOrWillChangePlaymode))
+                using (new EditorGUI.DisabledScope(LoginRunner.Busy || sdk.IsSigningIn || EditorApplication.isPlayingOrWillChangePlaymode))
                     foreach (var account in catalog.accounts)
                     {
                         string label = account.Label + (string.IsNullOrWhiteSpace(account.note) ? "" : "\n" + account.username);
@@ -853,6 +885,7 @@ namespace LGC.VrcQuickLogin
             EditorGUILayout.EndScrollView();
             if (GUILayout.Button("管理账号")) { VrcQuickLoginWindow.OpenWindow(); editorWindow.Close(); }
         }
+
     }
 }
 #endif

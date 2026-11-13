@@ -1,4 +1,4 @@
-"""LGC VRC Quick Login v1.1.3: build a credential-free, allowlisted VPM ZIP."""
+"""LGC VRC Quick Login v1.1.5: build a credential-free, allowlisted VPM ZIP."""
 import hashlib
 import json
 import os
